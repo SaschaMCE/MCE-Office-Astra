@@ -1,0 +1,6 @@
+3167f1ccceaf79656acc71711d7f542139254423b1f6d19e82356d9e7e86d2a0  parts/MCE-Office-1.0.30-portable.exe.000.part
+d3d0ff5830567588e6e3c72e124e2b88457618383f466bf21ea5b736b5b16790  parts/MCE-Office-1.0.30-portable.exe.001.part
+34e057eab9e8a7a2e81d9d02b46eeda0bf307f5d15812feefe2a4b0ca662cb98  parts/MCE-Office-1.0.30-portable.exe.002.part
+08e91c4edab8cd81517ca59f64c8f67cb8df2d5925ea3d15f40e253709c3923a  parts/MCE-Office-1.0.30-portable.exe.003.part
+1487da2b145bdfe5d0f6bd177f8023c3e4c68691ebb63ab1ffefbde360e134bd  parts/MCE-Office-1.0.30-portable.exe.004.part
+70038506a9f19a7731ed6de49428ead45ea4053253284893601bbdd016f75130  parts/MCE-Office-1.0.30-portable.exe.005.part

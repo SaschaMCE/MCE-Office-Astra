@@ -1,0 +1,12 @@
+MCE Office 1.0.30
+
+1. Rechtsklick auf die heruntergeladene ZIP-Datei: Alle extrahieren.
+2. Den entpackten Ordner oeffnen.
+3. Start-MCE-Office-1.0.30.cmd doppelt anklicken.
+
+Der Starter setzt die mitgelieferten Teile zusammen, prueft die Datei
+und startet MCE Office. Dafuer ist kein Internet erforderlich.
+Bei spaeteren Starts kannst du direkt MCE-Office-1.0.30-portable.exe oeffnen.
+
+SHA256:
+ff89230b4785e6599f49b1ec8b271441b4f4c4efbcb36a0b7fdbf1262124e7b3

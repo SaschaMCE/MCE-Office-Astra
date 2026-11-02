@@ -56,6 +56,13 @@ const {fork} = require('node:child_process');
    v.finishIntro(true,'tokyo-2');v.togglePartition();simulate(4,60);results.partitionOpen=v.office.partition.open;
    v.togglePartition();simulate(4,60);results.partitionClosed=v.office.partition.open;
    results.scene={shadows:!!v.office.scene.getObjectByName('office-contact-shadows'),arms:v.office.colleague.arms.length,places:window.__mcePlaces.length};
+   const tv=v.office.scene.getObjectByName('office-tv');
+   v.office.tick(0); // Consume the visibility recorded by the previous frame.
+   const hiddenVersion=tv.material.map.version;
+   for(let n=0;n<360;n++)v.office.tick(1/60);
+   results.hiddenTVUnchanged=tv.material.map.version===hiddenVersion;
+   tv.onBeforeRender();v.office.tick(1/60);
+   results.visibleTVUpdated=tv.material.map.version>hiddenVersion;
    v.ambientShading.render=render;reset();v.frame(v.last+16.667);
    return results;
   });
@@ -71,6 +78,7 @@ const {fork} = require('node:child_process');
   assert(results.projector.screen===1&&results.projector.light===1&&results.projector.off);
   assert(results.partitionOpen===1&&results.partitionClosed===0);
   assert(results.scene.shadows&&results.scene.arms===2&&results.scene.places===41);
+  assert(results.hiddenTVUnchanged&&results.visibleTVUpdated);
   await page.getByTitle('Escape routes and the fastest way out from here',{exact:true}).dispatchEvent('click');
   await page.waitForFunction(()=>window.__mceView.escape() && window.__mceView.escapeInfo()?.metres > 0);
   results.escape=await page.evaluate(()=>{
@@ -90,6 +98,7 @@ const {fork} = require('node:child_process');
   await page.getByTitle('Escape routes and the fastest way out from here',{exact:true}).dispatchEvent('click');
   await page.getByRole('button',{name:'Switch to smoother graphics'}).dispatchEvent('click');
   assert(await page.evaluate(()=>!window.__mceView.detailedGraphics&&localStorage.getItem('mce-office-graphics')==='smooth'));
+  assert(await page.evaluate(()=>window.__mceView.ambientShading.target.width===1&&window.__mceView.ambientShading.target.height===1));
   await page.evaluate(()=>window.__mceView.frame(window.__mceView.last+16.667));
   await page.getByRole('button',{name:'Switch to detailed graphics'}).dispatchEvent('click');
   assert(await page.evaluate(()=>window.__mceView.detailedGraphics));
@@ -108,12 +117,55 @@ const {fork} = require('node:child_process');
   await page.setViewportSize({width:1440,height:900});
   await page.waitForTimeout(200);
   for (const place of ['welcome','coffee']) {
-    await page.evaluate(place=>{const v=window.__mceView;v.finishIntro(true,place);v.frame(v.last+16.667);},place);
+    await page.evaluate(async place=>{
+      const v=window.__mceView;
+      v.resetInput();v.stopWalk();v.finishIntro(true,place);v.pace=0;v.placeTimer=0;
+      v.frame(v.last+16.667);
+      await new Promise(requestAnimationFrame);
+      v.resize();v.frame(v.last+16.667);
+      const gl=v.renderer.getContext(),pixel=new Uint8Array(4);
+      gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
+      if(gl.isContextLost()||pixel[3]!==255)throw Error('Screenshot frame readback failed');
+    },place);
     await page.screenshot({path:path.join(artifacts,`${place}.png`)});
   }
+  results.culling=await page.evaluate(()=>{
+    const v=window.__mceView,r=v.renderer,counts=[];
+    for(const place of ['welcome','coffee']) {
+      v.finishIntro(true,place);v.camera.position.set(v.pos[0],1.62,v.pos[1]);v.camera.rotation.set(0,v.yaw,0);
+      r.render(v.office.scene,v.camera);counts.push({place,triangles:r.info.render.triangles,calls:r.info.render.calls});
+    }
+    return counts;
+  });
+  assert(results.culling[0].triangles<160000&&results.culling[1].triangles<260000);
+  assert(results.culling.every(x=>x.calls<600));
+  console.log('Visibility workload:',JSON.stringify(results.culling));
+  results.adaptive=await page.evaluate(()=>{
+    const v=window.__mceView, budget=v.frameBudget, canvas=v.renderer.domElement;
+    budget.reset();
+    const fullPixels=canvas.width*canvas.height, cssWidth=canvas.clientWidth;
+    const send=(ms,count)=>{for(let i=0;i<count;i++)budget.observe(ms);};
+    send(27,240); // Sustained GPU overload, including settling periods.
+    const slow={scale:v.renderScale,pixels:canvas.width*canvas.height,cssWidth:canvas.clientWidth};
+    send(12,90);
+    const steady=v.renderScale;
+    send(4,900); // Restore detail only after sustained spare GPU capacity.
+    const fast={scale:v.renderScale,pixels:canvas.width*canvas.height};
+    send(10000,120);
+    const gap=v.renderScale;
+    budget.reset();
+    return {timerAvailable:!!budget.ext,fullPixels,cssWidth,slow,steady,fast,gap};
+  });
+  assert(results.adaptive.slow.scale>=0.7&&results.adaptive.slow.scale<0.8);
+  assert(results.adaptive.slow.pixels<results.adaptive.fullPixels*.65);
+  assert(results.adaptive.slow.cssWidth===results.adaptive.cssWidth);
+  assert(results.adaptive.steady===results.adaptive.slow.scale);
+  assert(results.adaptive.fast.scale===1&&results.adaptive.fast.pixels===results.adaptive.fullPixels);
+  assert(results.adaptive.gap===1);
+  console.log('Adaptive resolution passed:',JSON.stringify(results.adaptive));
   assert.deepEqual(errors,[]);
   fs.writeFileSync(path.join(artifacts,'validation.json'),JSON.stringify({results,size,errors,passed:true},null,2));
-  console.log('PASS: rendering, frame-rate consistency, mouse-look, blur, resume, 3 routes, projector, partition, exit route, map and resize.');
+  console.log('PASS: rendering, frame-rate consistency, mouse-look, blur, resume, 3 routes, projector, partition, exit route, map, resize, visibility budgets and adaptive resolution.');
  } catch (error) {
    console.error('Browser diagnostics:',await pageState(browser));
    throw error;

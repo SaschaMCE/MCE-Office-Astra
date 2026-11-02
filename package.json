@@ -1,13 +1,15 @@
 {
   "name": "mce-office-graphics-workspace",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "private": true,
   "description": "Editable recovery of the MCE Office 1.0.28 Electron application, with 3D enhancements",
   "scripts": {
     "dev": "node scripts/serve.cjs",
     "test": "node tests/office.cjs",
+    "profile": "node scripts/profile.cjs",
     "build": "node scripts/build.mjs",
-    "package": "python3 scripts/package-portable.py"
+    "package": "python3 scripts/package-portable.py",
+    "download": "python3 scripts/create-download.py"
   },
   "engines": {"node": ">=22.12"},
   "devDependencies": {

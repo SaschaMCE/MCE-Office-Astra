@@ -39521,18 +39521,34 @@ var en = {
         ),
         r.attributes.normal || r.computeVertexNormals(),
         r.clearGroups());
-      let o = this.groups.get(t) ?? [];
-      (o.push(r), this.groups.set(t, o));
+      // Keep batches local so looking into one room can cull the other wings.
+      // World-space bounds include large walls/floors crossing cell boundaries.
+      r.computeBoundingBox();
+      const bounds = r.boundingBox;
+      const cell = `${Math.floor((bounds.min.x + bounds.max.x) / 16)},${Math.floor((bounds.min.z + bounds.max.z) / 16)}`;
+      let cells = this.groups.get(t);
+      if (!cells) this.groups.set(t, cells = new Map());
+      let batch = cells.get(cell);
+      if (!batch) cells.set(cell, batch = []);
+      batch.push(r);
     }
     flush(e) {
-      for (let [t, n] of this.groups) {
-        let r = wf(n, !1);
-        if (!r) continue;
-        let o = new Ge(r, t);
-        ((o.matrixAutoUpdate = !1),
-          t.transparent && (o.renderOrder = t.userData.renderOrder ?? 2),
-          e.add(o),
-          n.forEach((a) => a.dispose()));
+      for (let [t, cells] of this.groups) {
+        const all = [...cells.values()].flat();
+        // Small batches stay together: extra draw calls would cost more than
+        // the handful of vertices saved. Only dense furniture needs cells.
+        const batches = all.reduce((sum, g) => sum + g.attributes.position.count, 0) > 18000
+          ? cells.values() : [all];
+        for (let n of batches) {
+          let r = wf(n, !1);
+          if (!r) continue;
+          r.computeBoundingSphere();
+          let o = new Ge(r, t);
+          ((o.matrixAutoUpdate = !1),
+            t.transparent && (o.renderOrder = t.userData.renderOrder ?? 2),
+            e.add(o),
+            n.forEach((a) => a.dispose()));
+        }
       }
       this.groups.clear();
     }
@@ -40578,6 +40594,7 @@ function AD(i, e) {
     f = 0,
     c = 0,
     p = !1,
+    dirty = !1,
     m = (M) => {
       let D = Math.max(t / M.naturalWidth, n / M.naturalHeight),
         S = M.naturalWidth * D,
@@ -40641,11 +40658,13 @@ function AD(i, e) {
       })
       .catch(() => {}),
     {
-      step(M) {
-        p &&
-          ((c += M),
-          c >= r && ((c -= r), (f = (f + 1) % d.length)),
-          c < o + M && g(Math.min(1, c / o)));
+      step(M, visible = true) {
+        if (!p) return;
+        c += M;
+        if (c >= r) { c -= r; f = (f + 1) % d.length; dirty = true; }
+        if (c < o + M) dirty = true;
+        // Keep slideshow time while off screen, but defer the canvas upload.
+        if (visible && dirty) { g(Math.min(1, c / o)); dirty = false; }
       },
     }
   );
@@ -44045,10 +44064,15 @@ function Pb(i) {
     [Ps, pl] = Gt(fl, Zi),
     Is = a($t(Ps)),
     yo = AD(pl, () => (Is.needsUpdate = !0)),
+    tvWasVisible = false,
     Ji = or.find((h) => h.kind === "tv-wall");
+  Is.generateMipmaps = false;
+  Is.minFilter = Ln;
   if (Ji) {
     let h = (-Ji.w / 2 + 0.25 + Ji.w / 2 - 0.8) / 2,
       P = new Ge(new Wt(1.88, 1.06), new Pt({ map: Is, toneMapped: !1 }));
+    P.name = "office-tv";
+    P.onBeforeRender = () => { tvWasVisible = true; };
     (P.applyMatrix4(
       qn(Ji.at, Ji.rot ?? 0).multiply(
         new De().makeTranslation(h, 1.62, Ji.d / 2 - 0.25 + 0.062),
@@ -44124,7 +44148,8 @@ function Pb(i) {
           e.add(ki)));
     },
     E = (h) => {
-      (yo.step(h),
+      (yo.step(h, tvWasVisible),
+        tvWasVisible = false,
         !(!Qi.visible && !ki) &&
           ((gr.offset.x = (gr.offset.x - h * 0.8) % 1),
           (bo.offset.x = (bo.offset.x - h * 1.6) % 1)));
@@ -44631,6 +44656,81 @@ function yP() {
         },
       );
 }
+// GPU timings arrive asynchronously: never wait for the GPU in the frame loop.
+// Adapt only the 3D buffer; text, controls and the selected lighting stay intact.
+class MceFrameBudget {
+  constructor(renderer, changeScale) {
+    this.gl = renderer.getContext();
+    this.ext = renderer.extensions.get("EXT_disjoint_timer_query_webgl2");
+    this.changeScale = changeScale;
+    this.pending = [];
+    this.active = null;
+    this.frame = 0;
+    this.reset();
+  }
+  reset() {
+    for (const query of this.pending) this.gl.deleteQuery(query);
+    this.pending.length = 0;
+    this.scale = 1;
+    this.samples = 0;
+    this.total = 0;
+    this.fastWindows = 0;
+    this.warmup = 15;
+    this.changeScale(1);
+  }
+  observe(ms) {
+    if (!Number.isFinite(ms) || ms <= 0 || ms > 250) return;
+    if (this.warmup > 0) { this.warmup--; return; }
+    this.total += ms;
+    if (++this.samples < 15) return;
+    const average = this.total / this.samples;
+    this.total = 0;
+    this.samples = 0;
+    let next = this.scale;
+    if (average > 15) {
+      next = Math.max(0.7, this.scale - 0.08);
+      this.fastWindows = 0;
+    } else if (average < 8) {
+      if (++this.fastWindows >= 3) { next = Math.min(1, this.scale + 0.04); this.fastWindows = 0; }
+    } else this.fastWindows = 0;
+    if (Math.abs(next - this.scale) > 0.001) {
+      this.scale = next;
+      this.warmup = 15;
+      this.changeScale(next);
+    }
+  }
+  begin() {
+    const gl = this.gl, ext = this.ext;
+    if (!ext || gl.isContextLost() || ++this.frame % 4) return;
+    if (gl.getParameter(ext.GPU_DISJOINT_EXT)) {
+      for (const query of this.pending) gl.deleteQuery(query);
+      this.pending.length = 0;
+      this.samples = this.total = this.fastWindows = 0;
+      this.warmup = 15;
+      return;
+    }
+    while (this.pending.length && gl.getQueryParameter(this.pending[0], gl.QUERY_RESULT_AVAILABLE)) {
+      const query = this.pending.shift();
+      const ms = gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6;
+      gl.deleteQuery(query);
+      this.observe(ms);
+    }
+    if (this.pending.length >= 3) return;
+    this.active = gl.createQuery();
+    if (this.active) gl.beginQuery(ext.TIME_ELAPSED_EXT, this.active);
+  }
+  end() {
+    if (!this.active) return;
+    this.gl.endQuery(this.ext.TIME_ELAPSED_EXT);
+    this.pending.push(this.active);
+    this.active = null;
+  }
+  dispose() {
+    this.end();
+    for (const query of this.pending) this.gl.deleteQuery(query);
+    this.pending.length = 0;
+  }
+}
 // Depth-based ambient shading adds contact around furniture and wall corners.
 // The scene is drawn only once; occlusion runs at half resolution, then is
 // upsampled with depth-aware weights so silhouettes stay clean.
@@ -44638,24 +44738,25 @@ class MceAmbientShading {
   constructor(renderer, camera) {
     this.renderer = renderer;
     this.camera = camera;
-    this.target = new ei(1, 1, {type: Ii, samples: Math.min(4, renderer.capabilities.maxSamples)});
+    this.target = new ei(1, 1, {type: Ii, samples: Math.min(2, renderer.capabilities.maxSamples)});
     this.target.depthTexture = new Ir(1, 1);
-    this.ambient = new ei(1, 1, {depthBuffer: false});
+    // Store view depth alongside occlusion for inexpensive edge-aware upsampling.
+    this.ambient = new ei(1, 1, {depthBuffer: false, type: Ii, format: Vr, minFilter: Pn, magFilter: Pn});
+    this.filtered = this.ambient.clone();
     this.scene = new oo();
     this.quadCamera = new ms(-1, 1, 1, -1, 0, 1);
     const vertexShader = `varying vec2 vUv;
       void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
     this.ao = new ci({
       depthTest: false, depthWrite: false, toneMapped: false,
-      uniforms: {tDepth: {value: this.target.depthTexture}, inverseProjection: {value: camera.projectionMatrixInverse}, projection: {value: camera.projectionMatrix}},
+      uniforms: {tDepth: {value: this.target.depthTexture}, projection: {value: camera.projectionMatrix}},
       vertexShader,
       fragmentShader: `varying vec2 vUv;
         uniform sampler2D tDepth;
-        uniform mat4 inverseProjection;
         uniform mat4 projection;
         vec3 positionAt(vec2 uv) {
-          vec4 p = inverseProjection * vec4(uv * 2.0 - 1.0, texture2D(tDepth, uv).x * 2.0 - 1.0, 1.0);
-          return p.xyz / p.w;
+          float z = -projection[3][2] / (texture2D(tDepth, uv).x * 2.0 - 1.0 + projection[2][2]);
+          return vec3((uv * 2.0 - 1.0) * (-z) / vec2(projection[0][0], projection[1][1]), z);
         }
         void main() {
           vec3 p = positionAt(vUv);
@@ -44663,44 +44764,67 @@ class MceAmbientShading {
           vec2 radius = min(vec2(0.10), vec2(projection[0][0], projection[1][1]) * 0.32 / max(0.2, -p.z));
           float shade = 0.0;
           float rotation = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.283185;
-          for (int i = 0; i < 24; i++) {
+          for (int i = 0; i < 16; i++) {
             float angle = float(i) * 2.399963 + rotation;
-            vec2 uv = vUv + vec2(cos(angle), sin(angle)) * radius * sqrt((float(i) + 0.5) / 24.0);
+            vec2 uv = vUv + vec2(cos(angle), sin(angle)) * radius * sqrt((float(i) + 0.5) / 16.0);
             if (uv.x <= 0.0 || uv.y <= 0.0 || uv.x >= 1.0 || uv.y >= 1.0) continue;
             vec3 delta = positionAt(uv) - p;
             float distanceToSample = length(delta);
             shade += max(0.0, dot(normal, delta / max(distanceToSample, 0.0001)) - 0.12)
               * (1.0 - smoothstep(0.08, 0.65, distanceToSample));
           }
-          float occlusion = clamp(1.0 - shade * 0.115, 0.6, 1.0);
-          gl_FragColor = vec4(vec3(occlusion), 1.0);
+          float occlusion = clamp(1.0 - shade * 0.1725, 0.6, 1.0);
+          gl_FragColor = vec4(occlusion, -p.z, 0.0, 1.0);
+        }`
+    });
+    // Smooth the sampling pattern at half resolution, preserving depth edges.
+    this.blur = new ci({
+      depthTest: false, depthWrite: false, toneMapped: false,
+      uniforms: {tAO: {value: this.ambient.texture}, texel: {value: new xe(1, 1)}},
+      vertexShader,
+      fragmentShader: `varying vec2 vUv;
+        uniform sampler2D tAO;
+        uniform vec2 texel;
+        void main() {
+          vec2 center = texture2D(tAO, vUv).rg;
+          float total = 0.0, weight = 0.0;
+          for (int x = -1; x <= 1; x++) {
+            for (int y = -1; y <= 1; y++) {
+              vec2 value = texture2D(tAO, vUv + vec2(float(x), float(y)) * texel).rg;
+              float w = exp(-abs(value.g - center.g) * 20.0) / (1.0 + float(x*x+y*y));
+              total += value.r * w;
+              weight += w;
+            }
+          }
+          gl_FragColor = vec4(total / weight, center.g, 0.0, 1.0);
         }`
     });
     this.composite = new ci({
       depthTest: false, depthWrite: false,
-      uniforms: {tColor: {value: this.target.texture}, tAO: {value: this.ambient.texture}, tDepth: {value: this.target.depthTexture}, inverseProjection: {value: camera.projectionMatrixInverse}, texel: {value: new xe(1, 1)}},
+      uniforms: {tColor: {value: this.target.texture}, tAO: {value: this.filtered.texture}, tDepth: {value: this.target.depthTexture}, projection: {value: camera.projectionMatrix}, texel: {value: new xe(1, 1)}},
       vertexShader,
       fragmentShader: `varying vec2 vUv;
         uniform sampler2D tColor, tAO, tDepth;
-        uniform mat4 inverseProjection;
+        uniform mat4 projection;
         uniform vec2 texel;
-        float viewDepth(vec2 uv) {
-          vec4 p = inverseProjection * vec4(uv * 2.0 - 1.0, texture2D(tDepth, uv).x * 2.0 - 1.0, 1.0);
-          return p.z / p.w;
-        }
         void main() {
-          float centerDepth = viewDepth(vUv);
+          float centerDepth = projection[3][2] / (texture2D(tDepth, vUv).x * 2.0 - 1.0 + projection[2][2]);
+          vec2 pixel = vUv / texel - 0.5;
+          vec2 base = (floor(pixel) + 0.5) * texel;
+          vec2 blend = fract(pixel);
           float total = 0.0;
           float weight = 0.0;
-          for (int x = -1; x <= 1; x++) {
-            for (int y = -1; y <= 1; y++) {
-              vec2 uv = vUv + vec2(float(x), float(y)) * texel;
-              float w = exp(-abs(viewDepth(uv) - centerDepth) * 20.0) / (1.0 + float(x*x+y*y));
-              total += texture2D(tAO, uv).r * w;
+          for (int x = 0; x < 2; x++) {
+            for (int y = 0; y < 2; y++) {
+              vec2 sampleValue = texture2D(tAO, base + vec2(float(x), float(y)) * texel).rg;
+              float w = exp(-abs(sampleValue.g - centerDepth) * 20.0)
+                * (x == 0 ? 1.0 - blend.x : blend.x) * (y == 0 ? 1.0 - blend.y : blend.y);
+              total += sampleValue.r * w;
               weight += w;
             }
           }
-          gl_FragColor = vec4(texture2D(tColor, vUv).rgb * (total / max(weight, 0.0001)), 1.0);
+          float occlusion = weight > 0.0001 ? total / weight : 1.0;
+          gl_FragColor = vec4(texture2D(tColor, vUv).rgb * occlusion, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`
@@ -44709,12 +44833,14 @@ class MceAmbientShading {
     this.quad.frustumCulled = false;
     this.scene.add(this.quad);
   }
-  resize() {
-    const size = this.renderer.getDrawingBufferSize(new xe());
+  resize(active = true) {
+    const size = active ? this.renderer.getDrawingBufferSize(new xe()) : new xe(1, 1);
     this.target.setSize(size.x, size.y);
     const width = Math.max(1, Math.ceil(size.x / 2));
     const height = Math.max(1, Math.ceil(size.y / 2));
     this.ambient.setSize(width, height);
+    this.filtered.setSize(width, height);
+    this.blur.uniforms.texel.value.set(1 / width, 1 / height);
     this.composite.uniforms.texel.value.set(1 / width, 1 / height);
   }
   render(scene) {
@@ -44724,6 +44850,9 @@ class MceAmbientShading {
     this.quad.material = this.ao;
     r.setRenderTarget(this.ambient);
     r.render(this.scene, this.quadCamera);
+    this.quad.material = this.blur;
+    r.setRenderTarget(this.filtered);
+    r.render(this.scene, this.quadCamera);
     this.quad.material = this.composite;
     r.setRenderTarget(null);
     r.render(this.scene, this.quadCamera);
@@ -44731,7 +44860,9 @@ class MceAmbientShading {
   dispose() {
     this.target.dispose();
     this.ambient.dispose();
+    this.filtered.dispose();
     this.ao.dispose();
+    this.blur.dispose();
     this.composite.dispose();
     this.quad.geometry.dispose();
   }
@@ -44796,6 +44927,8 @@ var Zd = class i {
   );
   renderer = null;
   ambientShading = null;
+  frameBudget = null;
+  renderScale = 1;
   detailedGraphics = (() => {
     try { return localStorage.getItem("mce-office-graphics") !== "smooth"; }
     catch { return true; }
@@ -44869,6 +45002,7 @@ var Zd = class i {
       (this.renderer.toneMappingExposure = 1.05),
       (this.office = Pb(this.renderer)),
       (this.ambientShading = this.renderer.extensions.has("EXT_color_buffer_float") ? new MceAmbientShading(this.renderer, this.camera) : null),
+      !this.ambientShading && (this.detailedGraphics = false),
       this.stage.emit("built"),
       (this.office.labels.visible = !1),
       (this.camera.rotation.order = "YXZ"),
@@ -44879,6 +45013,7 @@ var Zd = class i {
     let n = this.loop(["coffee", "open-a04", "welcome", "tokyo-1", "coffee"]);
     ((this.colleagueTrack = n.length > 1 ? po(n) : null), this.listen());
     this.addGraphicsControl();
+    this.frameBudget = new MceFrameBudget(this.renderer, (scale) => { this.renderScale = scale; this.resize(); });
     let r = this.arriveAt();
     (r && this.finishIntro(!0, r),
       (this.last = performance.now()),
@@ -44927,6 +45062,7 @@ var Zd = class i {
     const click = (event) => {
       event.stopPropagation();
       this.detailedGraphics = !this.detailedGraphics;
+      this.frameBudget?.reset();
       try { localStorage.setItem("mce-office-graphics", this.detailedGraphics ? "detail" : "smooth"); } catch {}
       this.resize();
       update();
@@ -44965,14 +45101,15 @@ var Zd = class i {
     t < 10 ||
       n < 10 ||
       // Keep retina edges crisp while bounding fill-rate on large monitors.
-      (this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.detailedGraphics ? 2 : 1.5, Math.sqrt((this.detailedGraphics ? 3200000 : 1600000) / (t * n)))),
+      (this.renderer.setPixelRatio(this.renderScale * Math.min(window.devicePixelRatio || 1, this.detailedGraphics ? 2 : 1.5, Math.sqrt((this.detailedGraphics ? 3200000 : 1600000) / (t * n)))),
       this.renderer.setSize(t, n, !1),
-      this.ambientShading?.resize(),
+      this.ambientShading?.resize(this.detailedGraphics),
       (this.camera.aspect = t / n),
       this.camera.updateProjectionMatrix());
   }
   teardown() {
     (this.renderer?.setAnimationLoop(null),
+      this.frameBudget?.dispose(),
       this.ambientShading?.dispose(),
       this.office?.dispose(),
       this.renderer?.dispose(),
@@ -44986,20 +45123,20 @@ var Zd = class i {
     )
       return;
     let n = [this.pos[0], this.pos[1]];
-    // Short simulation steps keep steering, collision checks and door motion
-    // consistent at 30, 60 and 120 Hz, and after an occasional slow frame.
+    // Only steering and collisions need short simulation steps. Scene and UI
+    // animations run once per displayed frame, including after a slow frame.
+    this.stepPartition(t);
     const steps = Math.max(1, Math.ceil(t * 120));
     const dt = t / steps;
     for (let step = 0; step < steps; step++) {
       this.stepLook(dt);
       this.intro().done ? this.stepWalker(dt) : this.stepIntro(dt);
       this.freeLook = Math.max(0, this.freeLook - dt);
-      this.stepDoors(dt);
-      this.stepColleague(dt);
-      this.stepScreen(dt);
-      this.stepPartition(dt);
-      this.stepEscape(dt);
     }
+    this.stepColleague(t);
+    this.stepDoors(t);
+    this.stepScreen(t);
+    this.stepEscape(t);
     this.office.tick(t);
     let r = Math.hypot(this.pos[0] - n[0], this.pos[1] - n[1]);
     ((this.pace += ((t > 0 ? r / t : 0) - this.pace) * zr(t, 8)),
@@ -45014,14 +45151,18 @@ var Zd = class i {
     if (
       (this.camera.position.set(this.pos[0], rP + a, this.pos[1]),
       this.camera.rotation.set(this.pitch, this.yaw, 0),
+      this.frameBudget?.begin(),
       this.ambientShading && this.detailedGraphics ? this.ambientShading.render(this.office.scene) : this.renderer.render(this.office.scene, this.camera),
+      this.frameBudget?.end(),
       this.drawn || ((this.drawn = !0), this.stage.emit("ready")),
       (this.placeTimer -= t),
       this.placeTimer <= 0)
     ) {
-      ((this.placeTimer = 0.1),
-        this.me.set([this.pos[0], this.pos[1]]),
-        this.meAngle.set(-this.yaw / Ib));
+      this.placeTimer = 0.1;
+      if (this.showMap()) {
+        this.me.set([this.pos[0], this.pos[1]]);
+        this.meAngle.set(-this.yaw / Ib);
+      }
       let l =
         this.intro().done && !o && !ol(this.pos)
           ? _b(this.pos, this.intent)
@@ -45557,6 +45698,8 @@ var Zd = class i {
       this.computeEscape();
   }
   toggleMap() {
+    this.me.set([this.pos[0], this.pos[1]]);
+    this.meAngle.set(-this.yaw / Ib);
     this.showMap.set(!this.showMap());
   }
   dismissHint() {

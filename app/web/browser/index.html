@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en" data-beasties-container>
+<head>
+  <meta charset="utf-8">
+  <title>MCE Office</title>
+  <base href="./">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <style>
+    html, body { margin: 0; height: 100%; background: #ffffff; }
+
+    /* The welcome screen: on the screen the moment the window opens, before the app has loaded — the lift waits,
+       rides up to the 4th floor and the line fills with it. Laid out like the picture the portable exe shows while
+       it unpacks (desktop/build/splash.html), so the one follows the other without a jump. */
+    #mce-splash {
+      position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
+      overflow: hidden; background: #ffffff; color: #27348b;
+      font-family: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif;
+      transition: opacity .7s ease, transform .7s ease;
+    }
+    #mce-splash.leaving { opacity: 0; transform: scale(1.03); pointer-events: none; }
+
+    .mce-col { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; width: min(640px, calc(100vw - 32px)); }
+    .mce-logo { width: min(400px, 70vw); height: auto; }
+    .mce-bar { position: relative; width: 100%; height: 5px; margin: 34px 0 32px; border-radius: 3px; overflow: hidden; background: #e7ebf3; }
+    .mce-bar-fill {
+      position: absolute; inset: 0; transform-origin: left center; transform: scaleX(0); will-change: transform;
+      background: linear-gradient(90deg, #0b8fd6, #27348b);
+    }
+    /* A light running over the line — it keeps moving even while the app is busy building the office. */
+    .mce-bar-shine {
+      position: absolute; top: 0; bottom: 0; left: -160px; width: 160px; will-change: transform;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, .8), rgba(255, 255, 255, 0));
+      animation: mce-shine 1.5s linear infinite;
+    }
+    @keyframes mce-shine { to { transform: translateX(820px); } }
+    #mce-splash.arrived .mce-bar-shine { display: none; }
+
+    #mce-splash .mce-title { margin: 0; font-family: 'Segoe UI', system-ui, Arial, sans-serif; font-size: 1.9rem; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; color: #27348b; }
+    .mce-where { margin: .5rem 0 0; font-size: 1rem; color: #5c6681; }
+
+    .mce-lift { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 30px; min-height: 104px; }
+    .mce-display {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 96px; height: 66px; border-radius: 12px;
+      background: #1b2130; box-shadow: inset 0 0 0 2px #2d3549, 0 4px 14px rgba(27, 33, 48, .22);
+    }
+    /* The arrow riding up, and the same arrow standing still while the lift waits at a floor (the script's fades). */
+    .mce-dir { display: grid; }
+    .mce-dir > * { grid-area: 1 / 1; }
+    .mce-move, .mce-still { will-change: opacity; }
+    .mce-still { opacity: 0; }
+    .mce-arrow {
+      width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent; border-bottom: 15px solid #ffb547;
+    }
+    .mce-move .mce-arrow { will-change: transform, opacity; animation: mce-up .9s ease-in-out infinite; }
+    @keyframes mce-up { 0% { transform: translateY(9px); opacity: 0; } 45% { opacity: 1; } 100% { transform: translateY(-9px); opacity: 0; } }
+    /* The floor: a digit each, on top of each other — the script fades from one to the next as the lift passes. */
+    #mce-floor { display: grid; min-width: 1ch; font: 700 39px/1 Consolas, 'Courier New', monospace; color: #ffb547; text-shadow: 0 0 12px rgba(255, 181, 71, .65); }
+    #mce-floor > span { grid-area: 1 / 1; opacity: 0; will-change: transform, opacity; }
+    #mce-floor > span:first-child { opacity: 1; }
+    #mce-splash.arrived .mce-dir { display: none; }
+    #mce-splash.arrived .mce-display { animation: mce-ding 1.4s ease-out 1; }
+    @keyframes mce-ding { from { box-shadow: inset 0 0 0 2px #2d3549, 0 0 0 0 rgba(255, 181, 71, .6); } to { box-shadow: inset 0 0 0 2px #2d3549, 0 0 0 22px rgba(255, 181, 71, 0); } }
+    /* What the lift is doing: a line each, on top of each other, the script fading from one to the next. */
+    .mce-lines { display: grid; }
+    .mce-lines > * { grid-area: 1 / 1; }
+    .mce-status { min-width: 0; text-align: center; font-size: 1rem; color: #5c6681; will-change: opacity; }
+
+    /* Under the lift: the hint while it loads (where the unpacking picture has its own), then the button in its place. */
+    .mce-foot { display: grid; margin-top: 30px; }
+    .mce-foot > * { grid-area: 1 / 1; justify-self: center; align-self: start; }
+    .mce-hint { margin: 0; font-size: 14px; color: #8a93a8; transition: opacity .4s ease; }
+    #mce-splash.arrived .mce-hint { opacity: 0; }
+    .mce-go {
+      display: inline-flex; align-items: center; gap: 12px; padding: 15px 34px; border: 0; border-radius: 6px;
+      background: #27348b; color: #ffffff; font: 600 1.25rem/1 'Segoe UI', system-ui, Arial, sans-serif; cursor: pointer;
+      visibility: hidden; opacity: 0; transform: translateY(10px); transition: opacity .5s ease, transform .5s ease, background-color .2s;
+    }
+    .mce-go.in { visibility: visible; opacity: 1; transform: none; }
+    .mce-go:hover { background: #1f2a73; }
+    .mce-go:focus-visible { outline: 3px solid #0b8fd6; outline-offset: 3px; }
+    .mce-go svg { width: 20px; height: 20px; }
+
+    @media (max-width: 700px) { .mce-title { font-size: 1.6rem; white-space: normal; } }
+    @media (prefers-reduced-motion: reduce) { .mce-bar-shine, .mce-move .mce-arrow { animation: none; } }
+  </style>
+<style>@-webkit-keyframes fa-spin{0%{-webkit-transform:rotate(0deg);transform:rotate(0)}to{-webkit-transform:rotate(359deg);transform:rotate(359deg)}}:root{--ichi-ease:cubic-bezier(.22, 1, .36, 1);--ichi-bg:#ffffff;--ichi-hd-bg:#ffffff;--ichi-rail-bg:#f7f8fb;--ichi-plane:#f2f4f8;--ichi-plane-2:#e8ecf2;--ichi-surface:#ffffff;--ichi-line:#c3cbd8;--ichi-line-soft:#dde2ea;--ichi-line-strong:#848fa5;--ichi-ink:#121829;--ichi-ink-2:#465069;--ichi-ink-3:#5c6681;--ichi-head:#27348b;--ichi-accent:#0f76c1;--ichi-primary:#27348b;--ichi-primary-hover:#1d2770;--ichi-on-primary:#ffffff;--ichi-sel:#e7f0fa;--ichi-row-hover:#f6f8fc;--ichi-ring:rgba(15, 118, 193, .18);--ichi-shadow-1:0 1px 2px rgba(18, 24, 41, .05);--ichi-shadow-2:0 1px 2px rgba(18, 24, 41, .05), 0 10px 28px -16px rgba(18, 24, 41, .28);--ichi-shadow-pop:0 20px 44px -14px rgba(18, 24, 41, .3), 0 2px 6px rgba(18, 24, 41, .08);--ichi-strip:linear-gradient(90deg, #0f76c1 0%, #009fe3 50%, #27348b 100%);--ichi-badge-bg:#c2410c;--ichi-badge-fg:#ffffff;--ichi-ok-fg:#0b6b4b;--ichi-ok-bg:#e1f3ea;--ichi-ok-dot:#16a06f;--ichi-warn-fg:#9a4500;--ichi-warn-bg:#fdefe1;--ichi-warn-dot:#ed6c00;--ichi-stop-fg:#b42318;--ichi-stop-bg:#fce8e6;--ichi-stop-dot:#e04f3e;--ichi-info-fg:#0d5f9c;--ichi-info-bg:#e4f0fa;--ichi-n-fg:#465069;--ichi-n-bg:#edf0f5;--ichi-av-bg:#e3e8f6;--ichi-av-fg:#27348b;--ichi-scrim:rgba(14, 20, 38, .38)}:root{--font-display:Arial, "Helvetica Neue", Helvetica, "Liberation Sans", sans-serif;--font-body:Arial, "Helvetica Neue", Helvetica, "Liberation Sans", sans-serif;--brand-gradient:linear-gradient( 90deg, #27348b 0%, #0f76c1 49%, #009fe3 100% );--brand-bg:var(--ichi-bg);--brand-ink:var(--ichi-head);--brand-cyan-deep:var(--ichi-accent);--brand-cyan:#009fe3;--brand-cyan-light:#e0f5fc;--img-ichi:url(/ichi-wordmark.png);--img-one:url(/ichi-one.png);--ichi-warn:#d97706;--ichi-warn-strong:#b45309;--ichi-warn-surface:#fffbeb;--ichi-warn-border:#fcd34d;--p-font-size-xs:.6875rem;--p-font-size-sm:.8125rem;--p-font-size-base:.875rem;--p-font-size-md:.875rem;--p-font-size-lg:1rem;--p-font-size-xl:1.25rem;--p-border-radius:6px}html,body{margin:0;padding:0;height:100%;font-family:var(--font-body);color:var(--p-text-color);background:var(--brand-bg)}body{font-size:var(--p-font-size-base);line-height:1.5}button{font-family:inherit;font-size:inherit}h1{font-family:var(--font-display);letter-spacing:-.01em}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}*{scrollbar-width:thin;scrollbar-color:rgba(28,37,104,.22) transparent}*::-webkit-scrollbar{width:8px;height:8px}*::-webkit-scrollbar-track{background:transparent}*::-webkit-scrollbar-thumb{background:#1c256833;border-radius:999px}*::-webkit-scrollbar-thumb:hover{background:#1c256861}:root{--ichi-info-dot:#0f76c1;--ichi-n-dot:#8a94a8;--ichi-av2-bg:#ddf0fa;--ichi-av2-fg:#0b5e8a;--ichi-av3-bg:#e7eaf0;--ichi-av3-fg:#3a4560;--ichi-av4-bg:#fdeee2;--ichi-av4-fg:#8f4200}</style><link rel="stylesheet" href="styles-DXH32NYZ.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="styles-DXH32NYZ.css"></noscript></head>
+<body>
+  <div id="mce-splash">
+    <div class="mce-col">
+      <img class="mce-logo" src="mce-logo.svg" alt="Mitsui Chemicals Europe">
+      <div class="mce-bar" role="progressbar" aria-label="On the way to the 4th floor" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="mce-bar-fill"></div>
+        <div class="mce-bar-shine"></div>
+      </div>
+      <h1 class="mce-title">Welcome to our office</h1>
+      <p class="mce-where">Helmholtzstraße 19 · 4th floor · Düsseldorf</p>
+      <div class="mce-lift">
+        <div class="mce-display" aria-hidden="true">
+          <span class="mce-dir"><span class="mce-move"><span class="mce-arrow"></span></span><span class="mce-still"><span class="mce-arrow"></span></span></span><span id="mce-floor"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span></span>
+        </div>
+        <span class="mce-lines" role="status" aria-live="polite"><span class="mce-status">Calling the lift…</span></span>
+      </div>
+      <div class="mce-foot">
+        <p class="mce-hint">Please stand clear of the doors.</p>
+        <button type="button" class="mce-go" id="mce-go">
+          Let’s go
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <ichi-office-desktop></ichi-office-desktop>
+
+  <script>
+    // The welcome screen's own little controller — it runs before the app is loaded. The wait is told as a lift ride
+    // (owner, 2026-10-23): the lift waits at the ground floor while its doors open and people get out and in, closes its
+    // doors, rides up and stops on the way when someone gets in — the lift, never the app, is why it takes a while. The
+    // app reports its real steps (window.mceSplash.step: 'app' → 'built' → 'ready'); each step plays the next part of the
+    // ride. Building the office freezes every script for seconds, so each part is handed to the browser ahead as timed
+    // fades (Web Animations on opacity and transform, which it runs by itself), and the next step carries the ride on
+    // from wherever it got to.
+    (function () {
+      var root = document.getElementById('mce-splash');
+      var fill = root.querySelector('.mce-bar-fill');
+      var bar = root.querySelector('.mce-bar');
+      var digits = [].slice.call(document.querySelectorAll('#mce-floor > span'));
+      var lines = root.querySelector('.mce-lines');
+      var moving = root.querySelector('.mce-move');
+      var still = root.querySelector('.mce-still');
+      var go = document.getElementById('mce-go');
+
+      var ORDER = ['start', 'app', 'built', 'ready'];
+      // From one floor to the next, and the doors closing before the lift moves off.
+      var FLOOR_MS = 900;
+      var DOORS_MS = 1100;
+      var t0 = performance.now();
+      // Where the line starts: 0, or where the portable exe's launcher left it (#from=…, see desktop/main.js).
+      var fromMatch = /from=([0-9.]+)/.exec(location.hash);
+      var from = fromMatch ? Math.max(0, Math.min(0.2, parseFloat(fromMatch[1]) || 0)) : 0;
+      // The line goes with the lift: a little while it waits at the ground floor, a quarter for each floor up.
+      function barFor(floor) { return floor === 0 ? Math.max(from, 0.05) : 0.05 + floor * 0.2375; }
+
+      var marks = { start: 0 };
+      var phase = 'start', arrived = false, left = false, goFns = [], arriveTimer = 0;
+      // The part of the ride armed now: when it began, the state it began from, its events and the line's course.
+      var plan = null, anims = [];
+      var shown0 = { floor: 0, span: lines.firstElementChild, moving: false, bar: barFor(0) };
+
+      // ---- the parts of the ride: events in ms from the step — a line, a floor reached, the arrow riding or still
+
+      function partStart() {
+        // Handed over from the launcher, which has called the lift already.
+        if (from > 0) {
+          return [
+            { at: 0, text: 'Waiting for the doors to close…' },
+            { at: 2600, text: 'Someone is still getting in…' },
+            { at: 6000, text: 'The doors are closing…' },
+            { at: 9500, text: 'Someone is holding the doors…' }
+          ];
+        }
+        return [
+          { at: 0, text: 'Calling the lift…' },
+          { at: 1800, text: 'The lift is here — the doors are opening…' },
+          { at: 4200, text: 'Someone is still getting out…' },
+          { at: 7500, text: 'Waiting for the doors to close…' }
+        ];
+      }
+
+      // The app builds the office: the lift stays at the ground floor a little longer, then rides up — and on the 2nd
+      // floor someone gets in, for as long as it takes.
+      function partApp(st) {
+        var ev = [];
+        var t = st.moving ? 0 : 1300;
+        if (!st.moving) ev.push({ at: 0, text: 'One more person is getting in…' });
+        t = setOff(st, ev, t, 'The doors are closing…');
+        var stop = Math.max(st.floor, 2);
+        t = rideTo(st.floor, stop, t, ev);
+        var on = ordinal(stop);
+        ev.push({ at: t + 300, moving: false, text: 'The lift stops on the ' + on + ' floor — the doors open…' });
+        ev.push({ at: t + 3300, text: 'Someone is getting in on the ' + on + ' floor…' });
+        ev.push({ at: t + 7300, text: 'Waiting for the doors to close…' });
+        ev.push({ at: t + 12300, text: 'Someone is holding the doors on the ' + on + ' floor…' });
+        ev.push({ at: t + 20300, text: 'The doors are closing — and opening again…' });
+        return ev;
+      }
+
+      // The office is built and its first picture is being drawn: on up to the 3rd floor.
+      function partBuilt(st) {
+        var ev = [];
+        var t = setOff(st, ev, 0, st.floor > 0 ? 'The doors close — going up again…' : 'The doors are closing…');
+        t = rideTo(st.floor, Math.max(st.floor, 3), t, ev);
+        ev.push({ at: t + 200, text: 'Nearly at the 4th floor…' });
+        ev.push({ at: t + 3500, moving: false, text: 'The lift stops on the ' + ordinal(Math.max(st.floor, 3)) + ' floor for a moment…' });
+        return ev;
+      }
+
+      // Ready: up to the 4th floor, however fast the office came up — the ride is seen.
+      function partReady(st) {
+        var ev = [];
+        var t = setOff(st, ev, 0, st.floor > 0 ? 'The doors close — going up again…' : 'The doors are closing…');
+        var end = t + (4 - st.floor) * FLOOR_MS;
+        ev.push({ at: Math.max(t, end - FLOOR_MS), text: 'Arriving at the 4th floor…' });
+        rideTo(st.floor, 4, t, ev);
+        return ev;
+      }
+
+      // The lift sets off at `t`: first its doors close, unless it is riding already. Returns when it moves.
+      function setOff(st, ev, t, closing) {
+        if (st.moving) return t;
+        ev.push({ at: t, text: closing });
+        ev.push({ at: t + DOORS_MS, moving: true, text: 'Going up…' });
+        return t + DOORS_MS;
+      }
+
+      function rideTo(fromFloor, toFloor, t, ev) {
+        for (var f = fromFloor + 1; f <= toFloor; f++) ev.push({ at: t + (f - fromFloor) * FLOOR_MS, floor: f });
+        return t + (toFloor - fromFloor) * FLOOR_MS;
+      }
+
+      function ordinal(f) { return ['ground', '1st', '2nd', '3rd', '4th'][f]; }
+
+      // ---- playing a part
+
+      // Where the armed part has got to at `now`.
+      function stateAt(now) {
+        if (!plan) return shown0;
+        var dt = now - plan.at;
+        var st = { floor: plan.st.floor, span: plan.st.span, moving: plan.st.moving, bar: plan.st.bar };
+        plan.events.forEach(function (e) {
+          if (e.at > dt) return;
+          if (e.floor != null) st.floor = e.floor;
+          if (e.span) st.span = e.span;
+          if (e.moving != null) st.moving = e.moving;
+        });
+        var pts = plan.line;
+        st.bar = pts[pts.length - 1][1];
+        for (var k = 1; k < pts.length; k++) {
+          if (dt <= pts[k][0]) {
+            var a = pts[k - 1], b = pts[k];
+            st.bar = b[0] > a[0] ? a[1] + ((b[1] - a[1]) * (dt - a[0])) / (b[0] - a[0]) : b[1];
+            break;
+          }
+        }
+        return st;
+      }
+
+      // Stop what is armed and put the screen plainly in the state it reached.
+      function settle(now) {
+        var st = stateAt(now);
+        anims.forEach(function (a) { a.cancel(); });
+        anims = [];
+        digits.forEach(function (d, k) { d.style.opacity = k === st.floor ? '1' : '0'; d.style.transform = 'none'; });
+        [].slice.call(lines.children).forEach(function (s) { if (s !== st.span) s.remove(); });
+        st.span.style.opacity = '1';
+        moving.style.opacity = st.moving ? '1' : '0';
+        still.style.opacity = st.moving ? '0' : '0.35';
+        fill.style.transform = 'scaleX(' + st.bar + ')';
+        bar.setAttribute('aria-valuenow', String(Math.round(st.bar * 100)));
+        plan = null;
+        shown0 = st;
+        return st;
+      }
+
+      // Each element's course through a part as ONE animation of its own: the browser runs a single animation per
+      // element by itself, but two on the same element fall back to the script — frozen while the office is built.
+      // `steps`: fades in time order, each { at, dur, to }; a digit (`move`) comes in from below and leaves upwards.
+      function course(el, base, steps, move) {
+        var end = 0;
+        steps.forEach(function (st) { st.at = Math.max(st.at, end); end = st.at + st.dur; });
+        var keys = [];
+        var key = function (t, opacity, transform, easing) {
+          var k = { offset: Math.min(1, t / end), opacity: opacity };
+          if (move) k.transform = transform;
+          if (easing) k.easing = easing;
+          keys.push(k);
+        };
+        var v = base, tr = 'none';
+        key(0, v, tr);
+        steps.forEach(function (st) {
+          var from = move && st.to > v ? 'translateY(18px)' : tr;
+          var to = move ? (st.to > v ? 'none' : 'translateY(-14px)') : tr;
+          key(st.at, v, tr);
+          key(st.at, v, from, st.to > v ? 'ease-out' : 'ease-in');
+          key(st.at + st.dur, st.to, to);
+          v = st.to;
+          tr = to;
+        });
+        anims.push(el.animate(keys, { duration: end, fill: 'forwards' }));
+      }
+
+      // Arm a part: its events become each element's course, run by the browser on its own time. Returns when its last
+      // event comes.
+      function play(part) {
+        var now = performance.now();
+        var st = settle(now);
+        var events = part(st).sort(function (a, b) { return a.at - b.at; });
+        var cur = { floor: st.floor, span: st.span, moving: st.moving, text: st.span.textContent };
+        var line = [[0, st.bar]];
+        var end = 0;
+        // Per element: its opacity when the part starts, its fades, whether it moves as a digit.
+        var courses = new Map();
+        var fade = function (el, base, at, dur, to, move) {
+          if (!courses.has(el)) courses.set(el, { base: base, steps: [], move: !!move });
+          courses.get(el).steps.push({ at: at, dur: dur, to: to });
+        };
+        events.forEach(function (e) {
+          end = Math.max(end, e.at);
+          if (e.text != null && e.text !== cur.text) {
+            if (e.at <= 0) {
+              cur.span.textContent = e.text;
+            } else {
+              var span = document.createElement('span');
+              span.className = 'mce-status';
+              span.style.opacity = '0';
+              span.textContent = e.text;
+              lines.appendChild(span);
+              fade(cur.span, cur.span === st.span ? 1 : 0, e.at, 380, 0);
+              fade(span, 0, e.at, 380, 1);
+              e.span = span;
+              cur.span = span;
+            }
+            cur.text = e.text;
+          }
+          if (e.moving != null && e.moving !== cur.moving) {
+            fade(moving, st.moving ? 1 : 0, e.at, 380, e.moving ? 1 : 0);
+            fade(still, st.moving ? 0 : 0.35, e.at, 380, e.moving ? 0 : 0.35);
+            cur.moving = e.moving;
+          }
+          if (e.floor != null && e.floor !== cur.floor) {
+            fade(digits[cur.floor], cur.floor === st.floor ? 1 : 0, e.at, 250, 0, true);
+            fade(digits[e.floor], 0, e.at, 350, 1, true);
+            var last = line[line.length - 1];
+            line.push([Math.max(last[0], e.at - FLOOR_MS), last[1]], [e.at, barFor(e.floor)]);
+            cur.floor = e.floor;
+          }
+        });
+        courses.forEach(function (c, el) { course(el, c.base, c.steps, c.move); });
+        // Waiting at the ground floor, the line still creeps a little.
+        if (line.length === 1 && end > 0) line.push([end, Math.min(st.bar + 0.04, barFor(1) - 0.1)]);
+        var total = line[line.length - 1][0];
+        if (total > 0) {
+          anims.push(fill.animate(line.map(function (p) { return { transform: 'scaleX(' + p[1] + ')', offset: p[0] / total }; }), { duration: total, fill: 'forwards' }));
+        }
+        plan = { at: now, st: st, events: events, line: line };
+        return end;
+      }
+
+      function step(name) {
+        if (arrived || !(name in { app: 1, built: 1, ready: 1 }) || ORDER.indexOf(name) <= ORDER.indexOf(phase)) return;
+        marks[name] = Math.round(performance.now() - t0);
+        phase = name;
+        if (name === 'app') play(partApp);
+        else if (name === 'built') play(partBuilt);
+        else {
+          var end = play(partReady);
+          clearTimeout(arriveTimer);
+          arriveTimer = setTimeout(function () { arrive(false); }, end + 250);
+        }
+      }
+
+      function arrive(late) {
+        if (arrived) return;
+        arrived = true;
+        clearTimeout(arriveTimer);
+        marks.arrived = Math.round(performance.now() - t0);
+        var st = settle(performance.now());
+        digits.forEach(function (d, k) { d.style.opacity = k === 4 ? '1' : '0'; });
+        fill.style.transform = 'scaleX(1)';
+        bar.setAttribute('aria-valuenow', '100');
+        root.classList.add('arrived');
+        ding();
+        st.span.textContent = late ? 'The lift took its time today — step in.' : 'Ding — welcome to the 4th floor.';
+        go.classList.add('in');
+        go.focus({ preventScroll: true });
+      }
+
+      // The lift's arrival chime, made on the spot: a soft bell — its tone and two fainter overtones, dying away.
+      function ding() {
+        try {
+          var AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return;
+          var ctx = new AC();
+          marks.ding = ctx.state;
+          var at = ctx.currentTime + 0.03;
+          [[1, 0.2, 2.2], [2, 0.05, 1.2], [2.76, 0.035, 0.8]].forEach(function (p) {
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = 880 * p[0];
+            gain.gain.setValueAtTime(0.0001, at);
+            gain.gain.exponentialRampToValueAtTime(p[1], at + 0.012);
+            gain.gain.exponentialRampToValueAtTime(0.0001, at + p[2]);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(at);
+            osc.stop(at + p[2] + 0.05);
+          });
+          setTimeout(function () { ctx.close(); }, 2600);
+        } catch (e) {}
+      }
+
+      function leave() {
+        if (left) return;
+        left = true;
+        root.classList.add('leaving');
+        goFns.forEach(function (fn) { fn(); });
+        setTimeout(function () { root.remove(); }, 750);
+      }
+
+      go.addEventListener('click', leave);
+      // Nothing should keep anybody out: if the office has not reported back after a long while, let them in anyway.
+      setTimeout(function () { if (!arrived) arrive(true); }, 60000);
+
+      window.mceSplash = {
+        painted: new Promise(function (resolve) {
+          requestAnimationFrame(function () { requestAnimationFrame(function () { marks.painted = Math.round(performance.now() - t0); resolve(); }); });
+        }),
+        step: step,
+        onGo: function (fn) { if (left) fn(); else goFns.push(fn); },
+        // The window is on the screen now (the desktop app tells it): the ground floor's story starts again, to be seen.
+        shown: function () { marks.shown = Math.round(performance.now() - t0); if (phase === 'start' && !arrived) play(partStart); },
+        isArrived: function () { return arrived; },
+        marks: marks
+      };
+      play(partStart);
+    })();
+  </script>
+<link rel="modulepreload" href="chunk-NQXRH32Z.js"><script src="polyfills-5CFQRCPP.js" type="module"></script><script src="main-T4VOFCRR.js" type="module"></script></body>
+</html>

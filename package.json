@@ -1,0 +1,17 @@
+{
+  "name": "mce-office-graphics-workspace",
+  "version": "1.0.29",
+  "private": true,
+  "description": "Editable recovery of the MCE Office 1.0.28 Electron application, with 3D enhancements",
+  "scripts": {
+    "dev": "node scripts/serve.cjs",
+    "test": "node tests/office.cjs",
+    "build": "node scripts/build.mjs",
+    "package": "python3 scripts/package-portable.py"
+  },
+  "engines": {"node": ">=22.12"},
+  "devDependencies": {
+    "@electron/asar": "4.3.1",
+    "playwright": "1.64.1"
+  }
+}

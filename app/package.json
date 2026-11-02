@@ -1,0 +1,9 @@
+{
+  "name": "mce-office",
+  "productName": "MCE Office",
+  "version": "1.0.29",
+  "description": "MCE Office: the 4th floor of Helmholtzstraße 19 to walk through in 3D, as a desktop app",
+  "author": "Mitsui Chemicals Europe GmbH",
+  "private": true,
+  "main": "main.js"
+}
